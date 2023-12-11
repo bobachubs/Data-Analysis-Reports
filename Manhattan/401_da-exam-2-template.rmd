@@ -1,0 +1,255 @@
+---
+title: "36-401 DA Exam 2"
+author: "Sarah Li (sarahli)"
+date: "November 22, 2022"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+linestretch: 1.241
+fontsize: 12pt
+fontfamily: mathpazo
+---
+
+
+```{r setup, include = FALSE}
+# By default, do not include R source code in the PDF. We do not want to see
+# code, only your text and figures.
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE) 
+knitr::opts_chunk$set(warning = FALSE)
+library(car)
+library(bestglm)
+```
+
+
+```{r}
+data = read.csv("manhattan.csv", header=T)
+#filter out truncated and negative income values
+data = data[-c(which(data$Income == max(data$Income))),]
+data = data[-c(which(data$Income < 0)),]
+data.q = data[c(1,3,6,11)]
+data.c = data[-c(1,3,6,11)]
+```
+
+# Introduction
+
+  Every three years, the New York City government will conduct an extensive Housing and Vacancy Survey on the current housing conditions of NYC. Our research group has been tasked by a member of the watchdog group to analyze the relationship between household incomes and several other demographic and housing quality measurements. **(1)** In particular, they are interested in investigating two questions: (1) whether the average household income is different for the Caucasian population and Hispanic population, and (2) whether the relationship between age and household income is different depending on whether or not leakage has occurred in a resident's apartment. Each of these hypotheses will be conducted controlling for its appropriate respective predictor variables.  
+  
+  The sample we will be working with is from the Manhattan borough, and the raw data consists of 3373 observations with 11 columns. The response variable for our modeling is Income, and the predictors are Age, HeatBreaks (number of heating equipment breakdowns since 2002), MaintenanceDef (number of maintenance deficiencies between 2002 and 2005), Gender (Male/Female), Ethnic (Caucasian, African-American, Hispanic, Asian, Other), Health (ordinal self-assessment of health status), MiceRats, CracksHoles, BrokenPlaster, and WaterLeakage.
+  
+# Exploratory Data Analysis
+
+ **(2)** We first conduct exploratory data analyses on the ratio variables of the data set. Looking at these variables, we notice a number of truncated values for Income around ~10 million dollars and a few negative values, a total of 81 abnormal observations. After removing them, we decide to work with the data set of 3292 rows and 11 columns. From the distributions in Fig.1, Income, Age, HeatBreaks, and MaintenanceDef are all skewed right. There is an expected right skew in breaks/deficiencies, as more apartments should deal with fewer problems than not. The right skew in Income follows the typical trend of earnings in the U.S, with the lower and middle class being more saturated than the elitist class. The centers, or medians, for the variables respectively are 47000$ in total house income, 47 years of age, 1 heating equipment breakdown since 2002, and 2 maintenance deficiencies between 2002-2005. Their inclusive (min, max) range values are (600, 1773211) dollars, (19, 90) years, (1, 5) Heating breakdowns, (0, 8) Maintenance Deficiencies. 
+
+```{r fig.height = 6, fig.width= 7, fig.cap="Histograms of Ratio Variables"}
+#initial EDA hist of numeric vars
+par(mfrow =c(2,2))
+hist(data$Income, xlab = "Income ($)", main="Distribution of Income", col=2)
+hist(data$Age, xlab = "Age (yrs)", main="Distribution of Age", col=2)
+hist(data$HeatBreaks, xlab = "HeatBreaks", main="Distribution of Heating Breakdowns", col=2)
+hist(data$MaintenanceDef, xlab = "MaintenanceDef", main="Distribution of Maintenance Deficiencies", col=2)
+```
+
+```{r, include=F}
+median(data$Income)
+median(data$Age)
+median(data$HeatBreaks)
+median(data$MaintenanceDef)
+
+summary(data$Income)
+summary(data$Age)
+summary(data$HeatBreaks)
+summary(data$MaintenanceDef)
+```
+
+**(2 cont.)** We then conduct EDA on the categorical variables. From the proportions plot in Fig.2, we note that there are more observed male than female tenants; a major proportion of residents are Caucasian followed by Hispanic, African-American, Asian, then a small proportion of Other ethnicity; there is a higher proportion of no mice/rats reported in the last 90 days, no cracks/holes in interior walls, no broken plaster on ceilings/walls, and no water leaks compared to yes; and most self-reported health scores are between 1-3 compared to 4-6, indicating that most residents have a reported lower health statuses. These comparisons are not surprising.
+
+```{r fig.height=10, fig.width=9, fig.cap="Barplots of Categorical Variables"}
+#initial EDA of categorical vars
+par(mfrow=c(4,2))
+plot(factor(data$Gender), main="Barplot of Gender", col=2)
+plot(factor(data$Ethnic), main="Barplot of Ethnic Groups", col=2)
+plot(factor(data$MiceRats), main="Barplot of Mice or Rats", col=2)
+plot(factor(data$CracksHoles), main="Barplot of Cracks and Holes", col=2)
+plot(factor(data$BrokenPlaster), main="Barplot of Broken Plaster", col=2)
+plot(factor(data$WaterLeakage), main="Barplot of Water Leak", col=2)
+plot(factor(data$Health), main="Barplot of Health Score", col=2)
+```
+
+\newpage
+**(3)** We then proceed to do multivariate EDA. Since our continuous variables all skewed right, we attempt to log transform them into a more normal shape and compare the linearity of the scatter plots against the response variable Income. In the original pairs plot (results omitted) we observed that Age, HeatBreaks, and Maintenancedef plotted with Income resulted in very heteroskedastic shapes. The points between Income~Age were mostly cluttered around the bottom of the plot, with a few scattered above; the points between Income~HeatBreaks were skewed right, following the trend of the HeatBreaks distribution; Income~MaintenanceDef was also skewed right, following the trend the MaintenanceDef histogram from above. Since linearity is a major assumption of multilinear models, we transform Income and plot the pairs outcome again in the Fig.3. This time, we see that the scatter plots are much more evenly distributed with LogIncome, though still not quite linear. Fortunately, there doesn't seem to be signs of extreme multicollinearity among the predictors variables with one another. Subsequently, after attempting to transform more of the predictors (results omitted), we notice the plots don't change and linearity doesn't improve significantly, so we proceed with log transforming only Income.
+
+```{r fig.height=10, fig.width=12, fig.cap="Pairs Plot of Ratio Variables with Log Income"}
+#testing out log transformations on skewed variables
+#log(data$Income)
+par(mfrow =c(2,2))
+data.q.transformed = data.q
+data.q.transformed$Income = log(data.q.transformed$Income)
+colnames(data.q.transformed)[1] = "Log Income"
+#pairs(data.q, cex=0.7, main="pairs plot of transformed ratio variables", col=2)
+pairs(data.q.transformed, cex=0.7, main="Scatterplot of Ratio Variables with log(Income)", lower.panel=NULL, col=2)
+```
+
+
+```{r fig.height=14, fig.width=10, include=F}
+#boxplots without transformations
+par(mfrow=c(4,2))
+boxplot(Income ~ Gender, ylab="Log Income", data, xlab="Gender", col=2)
+boxplot(Income ~ Ethnic, ylab="Log Income", data, xlab="Ethnicity", col=2)
+boxplot(Income ~ MiceRats, ylab="Log Income", data, xlab="Mice/Rats", col=2)
+boxplot(Income ~ CracksHoles, ylab="Log Income", data, xlab="Cracks/Holes", col=2)
+boxplot(Income ~ BrokenPlaster, ylab="Log Income", data, xlab="Broken Plaster", col=2)
+boxplot(Income ~ WaterLeakage, ylab="Log Income", data, xlab="Water Leaks", col=2)
+boxplot(Income ~ Health, ylab="Log Income", data, xlab="Health Rating", col=2)
+```
+
+
+\newpage
+**(3 cont.)** We follow the same procedure plotting Income with the categorical variables and observe that every single boxplot range and interquartile range were grouped on the lower ends, with a significant amount of outliers with large ranges on the positive ends. After log transforming Income and plotting the side-by-side boxplots with the categorical variables in Fig.4, we confirm that the distributions are much more evenly distributed across Incomes. We point out that, given the data set, females have overall slightly higher Log Incomes than males; Caucasians and Asians have slightly higher Log Incomes than African-Americans and Hispanics; Residents with no rodents, cracks/holes, broken plaster, and water leaks have slightly higher Log Incomes than those with these disturbances. Interestingly, those with reported lower Health Statuses have higher Log Incomes than those with lower ratings. Observing much better distributions, we proceed with Log Income as our response variable for modeling.
+
+```{r fig.height=14, fig.width=10, fig.cap="Boxplots of Factor Variables with Log Income"}
+#boxplots with transformations
+data$LogIncome = log(data$Income)
+par(mfrow=c(4,2))
+boxplot(LogIncome ~ Gender, ylab="Log Income", data, xlab="Gender", col=2)
+boxplot(LogIncome ~ Ethnic, ylab="Log Income", data, xlab="Ethnicity", col=2)
+boxplot(LogIncome ~ MiceRats, ylab="Log Income", data, xlab="Mice/Rats", col=2)
+boxplot(LogIncome ~ CracksHoles, ylab="Log Income", data, xlab="Cracks/Holes", col=2)
+boxplot(LogIncome ~ BrokenPlaster, ylab="Log Income", data, xlab="Broken Plaster", col=2)
+boxplot(LogIncome ~ WaterLeakage, ylab="Log Income", data, xlab="Water Leaks", col=2)
+boxplot(LogIncome ~ Health, ylab="Log Income", data, xlab="Health Rating", col=2)
+
+```
+
+\newpage
+# Initial Modeling and Diagnostics
+
+## Modeling
+
+```{r}
+lm.1 = lm(LogIncome~ Age + HeatBreaks + MaintenanceDef+ factor(Gender) + 
+               relevel(factor(Ethnic), ref="Caucasian") + 
+               factor(Health) + factor(MiceRats) + factor(CracksHoles) + 
+               factor(BrokenPlaster) + factor(WaterLeakage), data, x=T)
+lm.2 = lm(LogIncome~ Age + + HeatBreaks + + MaintenanceDef+ factor(Gender) + 
+               relevel(factor(Ethnic), ref="Caucasian") + 
+               factor(Health) + factor(MiceRats) + factor(CracksHoles) + 
+               factor(BrokenPlaster) + factor(WaterLeakage) + Age:factor(WaterLeakage), data, x=T)
+```
+
+**(4)** We propose an initial model that includes all the predictor variables with the transformed response variable LogIncome:  
+
+\begin{gather*}
+LogIncome = \beta_0 + \beta_1*Age + \beta_2*HeatBreaks + \beta_3*MaintenanceDef + \beta_4*\mathbb{1}_{Gender = M} + \\
+\beta_5*\mathbb{1}_{Ethnic = African American} + \beta_6*\mathbb{1}_{Ethnic = Asian} + \beta_7*\mathbb{1}_{Ethnic = Hispanic} + \\ \beta_8*\mathbb{1}_{Ethnic = Other} + \beta_9*\mathbb{1}_{Health = 2} + \beta_{10}*\mathbb{1}_{Health = 3} + \\ \beta_{11}*\mathbb{1}_{Health = 4} + \beta_{12}*\mathbb{1}_{Health = 5} + \beta_{13}*\mathbb{1}_{Health = 6} + \\ \beta_{14}*\mathbb{1}_{MiceRats = Yes} + \beta_{15}*\mathbb{1}_{CracksHoles = Yes} + \beta_{16}*\mathbb{1}_{BrokenPlaster = Yes} + \\ \beta_{17}*\mathbb{1}_{WaterLeakage = Yes} + \epsilon
+\end{gather*}
+
+We treat Income, Age, HeatBreaks, and MaintenanceDef as the ratio or continuous variables. Gender, MiceRats, CracksHoles, BrokenPlaster, and WaterLeakage are all categorical/factor variables with 2 binary levels, while Ethnic is a categorical/factor variable with 5 levels. Health is treated as a ordinal categorical variable with 6 levels, since a higher the score indicates better health. As shown previously, log transforming Income significantly improved the initial model's linearity assumptions in both EDA and BDA. **(5)** We set the baseline for Ethnic to be Caucasian instead of the default. We also acknowledge the research group was interested in the relationship between age and household income depending on water leakages but have decided to omit the interaction between Age and WaterLeakage. These were decided due to statistical reasons below. 
+
+
+## Diagnostics
+
+**(6)(9)** For a multiple linear model to be considered a good fit of the observed data, it must follow a set of assumptions:  
+
+1. *The observations must be random, independent and identically distributed*. Indeed, we have no reason to believe that separate observations of residents and their apartments are samples dependently, since the data set is a subset of government official data.  
+
+2. *Linearity*. After transforming our response variable Income, we have concluded that the scatterplots of each predictor against LogIncome is evenly distributed but not so noticeably linear. Rather, many of the plots were more uniform than linear in a positive/negative direction. The side-by-side boxplots had many outliers but were roughly symmetric about the median otherwise after transformation. Overall, we are hesitant to confidently say that this assumption was not violated.  
+
+3. *The errors/residuals are uncorrelated and follow a normal distribution with mean 0 and $\sigma^2$*. Looking at our residuals vs. predictors plot in Fig.5, we observe that the errors are roughly centered around 0 overall. However, we also notice unusual heteroskedastic patterns, such as slight fanning toward the left direction for MaintenenceDef and HeatBreaks, Ethnic, and Health. The residuals of Age have a gap and a few outliers in the positive direction. Looking at the residuals vs. fitted values, we can see that the points moderately follow a homoskedastic scatter about 0. There is a slight divide in the upper right, but it doesn't seem too concerning. We assess the normality of the errors by looking at the q-q plot; there is slight deviation from the line on the lower left but nothing else too abnormal. Overall, there is no strong evidence indicating that the errors are uncorrelated, but we will still keep in mind the abnormal outward fanning.  
+
+```{r fig.height=16, fig.width=14, fig.cap="Residuals vs. Fitted for Predictors/Response and Normal Q-Q Plot" }
+#residuals of predictor vs. fitted
+par(mfrow=c(4,3))
+plot(lm.1, which=1)
+plot(lm.1, which=2)
+plot(data$Age, lm.1$residuals, xlab="Age", ylab="Residuals", 
+     cex.axis=1.3,cex.lab=1.3, col=4,pch=16,cex=0.5)
+abline(data$Age, 0)
+plot(data$MaintenanceDef, lm.1$residuals, xlab="Maintenance Deficiencies", ylab="Residuals", 
+     cex.axis=1.3,cex.lab=1.3, col=4,pch=16,cex=0.5)
+plot(data$HeatBreaks, lm.1$residuals, xlab="Heat Breaks", ylab="Residuals", 
+     cex.axis=1.3,cex.lab=1.3, col=4,pch=16,cex=0.5)
+plot(factor(data$Gender), lm.1$residuals, xlab="Gender", ylab="Residuals", 
+     cex.axis=1.3,cex.lab=1.3, col=4,pch=16,cex=0.5)
+plot(factor(data$Ethnic), lm.1$residuals, xlab="Ethnicity", ylab="Residuals", 
+     cex.axis=1.3,cex.lab=1.3, col=4,pch=16,cex=0.5)
+plot(factor(data$Health), lm.1$residuals, xlab="Health", ylab="Residuals", 
+     cex.axis=1.3,cex.lab=1.3, col=4,pch=16,cex=0.5)
+plot(factor(data$MiceRats), lm.1$residuals, xlab="Mice/Rats", ylab="Residuals", 
+     cex.axis=1.3,cex.lab=1.3, col=4,pch=16,cex=0.5)
+plot(factor(data$CracksHoles), lm.1$residuals, xlab="Cracks/Holes", ylab="Residuals", 
+     cex.axis=1.3,cex.lab=1.3, col=4,pch=16,cex=0.5)
+plot(factor(data$BrokenPlaster), lm.1$residuals, xlab="Broken Plaster", ylab="Residuals", 
+     cex.axis=1.3,cex.lab=1.3, col=4,pch=16,cex=0.5)
+plot(factor(data$WaterLeakage), lm.1$residuals, xlab="Water Leakage", ylab="Residuals", 
+     cex.axis=1.3,cex.lab=1.3, col=4,pch=16,cex=0.5)
+```
+
+4. *Constant Variance.* As noted previously, there were slight heteroskedastic patterns (open fanning toward the left) for MaintenenceDef and HeatBreaks, Ethnic, and Health. This goes against the constant variance assumption of the residuals for each predictor that is independent of another predictor. We also assessed the multicollinearity of the predictors using the variation inflation factor test vif() and concluded that the only predictor with a slightly higher vif is MaintenanceDef (3.62). We will consider the multicollinearity of MaintenanceDef with the other predictors in our conclusion. **(8)** Finally, to add on to the plots of residuals, we perform Cook's Distance on the outliers to see if there are any influential points that might have leveraged or increased the data variance. 
+
+```{r fig.height=6, fig.width=8, fig.cap="Cook's Distance on the LM"}
+#cookd
+cookd = cooks.distance(lm.1)
+plot(cookd, main="Influential Points of Transformed MLM", ylab="Cook's Distance", cex.main=0.9, col="darkcyan")
+#sort(pf(cookd, 18, 3274), decreasing=T)[1:10]
+#qf(0.5, 18, 3274)
+```
+
+Looking at the Fig.6, we can see that observations 2970, 2004, and 1344 stand out among the calculations, but we rest assured since the highest value in these sorted quantiles is 3.1892e-16, which is way below the F distribution's median with (18, 3274) degrees of freedom. None of the data points in our multiple linear model are considered influential and leveraging.
+
+
+```{r, include=FALSE}
+#VIF: variance inflation factor test of multicollinearity among predictors
+vif(lm.1)
+```
+
+**(6 cont.)** From the discussions about MLR assumptions, the possible improvements of our diagnostics that we were able to successfully address was transforming Income, which improved the scatterplots of the predictors with Income. **(9 cont.)** However, we could not entirely address the linearity assumption, as the scatterplots still did not display obvious or moderately strong linear relationships, even with further transformations. We also could not address the constant variance assumption, with suspicion of there being multicollinearity of MaintenanceDef with other predictors. **(7)** To see if there were any other significant interactions, we visually inferred from the bivariate analysis conducted beforehand and tried a few models using WaterLeakage as a suspect. We also tried running some interactions with MaintenaceDef given the vif() output; however, we were unable to find any significant interactive relationships using anova. 
+
+# Model Inference and Results
+
+**(10.1)** We perform a t-test on the research's group first question of interest: Whether the average household income is different for Caucasian and Hispanic populations when other various demographic and housing quality measurements (the other predictors in our model) are the same.  
+
+$$
+\begin{aligned}
+H_0&: \beta_7=0 \\
+H_A&: \beta_7 \neq 0
+\end{aligned}
+$$
+First, we observe from the summary output of our global F-test that the entire model observes a p-value of 2.2e-16, which is statistically significant; however, the multiple R-squared value is only .2946, indicating that the model does not explain the variation in the data that well. Looking at the levels for Ethnic, using Caucasian as the baseline level, we observe that Hispanic has a t-value of -15.139 and a low p-value (2e-16 < 0.05). Thus, we reject $H_0$ and conclude that there is a difference in the average household Income for Caucasian versus Hispanic residents, controlling for all other variables.
+
+```{r, include=F}
+#hypothesis test1: average household income is different for Caucasian/Hispanic population
+summary(lm.1) 
+```
+
+**(10.2)** Next, we also perform a hypothesis test regarding the research group's second question of interest -- that the relationship between age and income is different depending on the occurrence of water leakages in the apartment, for households sharing the same characteristics (predictors). We would add a new $\beta$ coefficient to our initial model: $\beta_{18}*Age*\mathbb{I}_{WaterLeakge=Yes}$ and perform a test on the following set of hypotheses.
+
+$$
+\begin{aligned}
+H_0&: \beta_{18}=0 \\
+H_A&: \beta_{18} \neq 0
+\end{aligned}
+$$
+
+```{r, include=F}
+#hypothesis test2: the relationship between age and the household income is different depending 
+#on whether or not water leakage has occurred in the apartment
+summary(lm.2)
+```
+
+Our summary shows that the global F-test results remain about the same. However, looking at the interaction term $Age:WaterLeakeage=Yes$, we observe a t-value of 0.020 and a very high p-value of 0.98424>0.05. Thus, we fail to reject the null hypothesis and cannot conclude that adding the interaction term significant improved the model. There is no evidence suggesting a difference in the slopes of the relationship between Age and LogIncome for residences with and without Waterleakages, controlling for the other predictors.
+
+
+```{r, include=F}
+newframe = data.frame(cbind(lm.1$x[,-1], data$LogIncome))
+bestglm(newframe, IC = "AIC")
+```
+
+**(11)** Though our Global F-test p-value was regarded as statistically significant, there are metrics to obtain a model focusing on high predictive power given our dataset. We approach this alternative model with an exhaustive search using Aikake's Information Criterion (AIC), which measures how well the new model can generalize to unseen data and combat possible over fitting. As a result, the bestglm() decides to keep Age, HeatBreaks, Gender, Ethnic, Health (African America, Asian, and Hispanic), and MiceRats in the new model. The new model omits the level Health (Other), MaintenanceDef, CracksHoles, BrokenPlaster, and WaterLeakage. The predictors that were kept matched every predictor with very low Beta coefficient p-values in the anova summary output.
+
+# Conclusion and Discussion
+
+**(12)** To reiterate, the research team was particularly interested in the household income for Caucasian versus Hispanic populations, as well as whether the relationship between Income and Age differed with the occurrences of water leakages within the apartments. From our hypotheses tests, we obtained evidence for the former but not the latter. The explanation for these findings can be attributed to the fact, generally in the US, Caucasians tend to have higher earnings than the other populations, and there have been no past findings suggesting Age and Income to differ with water leakages. Prior to the tests, we decided to immediately transform Income to LogIncome to better handle linearity. Additionally, to address how well our full model handled the hypotheses and multiple linear assumptions, we refer back to the bivariate analyses and residual plots. In summary, the observations are i.i.d. and contained no outliers; the individual plots of each predictor with LogIncome were not apparently linear but instead potentially uniform; most of the error plots for the predictors were homoskedastic about 0, some with non constant variance and heteroskedastic/fanning toward the left; the residuals were roughly normal with mean 0. Overall, none of the assumptions were extremely violated especially given the large sample, and, thus, the model fit is usable. 
+
+**(12 cont.)** Though the AIC model chooses the best predictors in the multiple linear regression model to handle the predictive power for LogIncome on testing data, we still abide by the model that included all predictors written in Initial Modeling. Though the p-values of the omitted predictors in the AIC model -- MaintenanceDef, CracksHoles, BrokenPlaster, and WaterLeakage -- had high p-values in the anova summary output, that does not imply that these predictors are insignificant and should be removed. As demonstrated by the vif() multicollinearity analysis, MaintenanceDef had the potential to be correlated with the other predictors. This can attribute to the higher p-values for the omitted predictors, as well as the heteroskedastic shapes of their residual plots. The potential collinearity may even improve the model. However, we also keep in mind the trade-off of keeping 17 variables in the model with over fitting. Researchers who care more about predictive power unseen data rather than model fit of original data should prefer the simpler AIC model. 

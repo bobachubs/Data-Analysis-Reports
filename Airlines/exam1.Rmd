@@ -1,0 +1,160 @@
+---
+title: "36-401 DA Exam 1"
+author: "Sarah Li (sarahli)"
+date: "October 14, 2022"
+output: pdf_document
+linestretch: 1.241
+fontsize: 12pt
+fontfamily: mathpazo
+---
+
+
+```{r setup, include = FALSE}
+# By default, do not include R source code in the PDF. We do not want to see
+# code, only your text and figures.
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE) 
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+# Introduction
+
+Airline services constantly struggle to fulfill customer satisfaction pertaining to the accuracy of flight information. A common complaint made by passengers is the unexpected delay at the arrival destination. The industry wants to gain a better insight of factors contributing to delayed arrivals in order to better provide good services at optimized prices. Specifically, the Bureau of Transportation Statistics (BTS) has been tracking every flight's statistics for the last two decades, broken down into: flight times, taxiing, distance, departure or arrival delay, etc. **(1)** In this report, we will specifically analyze the relationship between flight arrival and departure delay and assess the linearity between the two variables. Additionally, we will also observe if their relationship is affected by the presence of weather conditions.
+
+From our analyses, we are hesitant to conclude that there was evidence of a linear relationship between flight arrival delay and departure delay, even after data transformation. Additionally, weather doesn't seem to play a role in the relationship either. 
+
+# Exploratory Data Analysis and Initial Modeling
+
+For this report, we will be parsing in a sample of 4887 flight records from the "airlines.csv" file. We will individually assess the distributions and important statistics for Departure Delay (the main predictor variable) and Arrival Delay (the response variable). **(2)** From the histograms displayed in Figure 1, we can see the Departure Delay minutes are unimodal but heavily skewed right. The minutes range from -29 minutes (negative indicating early departure) to 1099 minutes (delay in departure). The center, or median, is at -1 minutes, indicating that over half the recorded flights departed earlier than expected. **(3)** As for Arrival Delays, the distribution of minutes is also unimodal but heavily skewed right. The minutes range from -60 minutes (negative indicating early arrival) to 1092 minutes (delay in arrival). The center is at -2 min, indicating that over half of the flights arrived early to their destinations.
+
+```{r fig.width=8, fig.height=4, fig.cap="EDA Analysis of Departure and Arrival Delays"}
+#initial EDA analysis on departure and arrival delays
+airlines = read.csv("airlines.csv", header=T)
+par(mfrow = c(1, 2))
+hist(airlines$DepDelay, breaks=10, xlab= "Departure Delays (min)", main="Distribution of Departure Delays", col = "cadetblue")
+hist(airlines$ArrDelay, breaks=10, xlab = "Arrival Delays (min)", main="Distribution of Arrival Delays", col = "lightpink")
+```
+
+Due to heavy skew, we proceed to transform the data by stretching it outward. Subsequently, we log both Arrival Delay and Departure Delay, accounting for their minimum values (-60 and -29 minutes, respectively) by shifting them up by 61 and 30 minutes. This is to ensure that every data point is included, as the log function only returns finite values for inputs greater than 0. **(2)(3)** Shown in Figure 2 below, though the transformed distributions aren't perfectly symmetric, they are much more normalized and easy to work with. 
+
+```{r fig.width=8, fig.height=3.5, fig.cap="EDA Analysis of Departure and Arrival Delays (Transformed)"}
+#transformed EDA analysis of log(departure) and log(arrival delays)
+par(mfrow = c(1, 2))
+#previous mins were -60 for arrival delays and -29 for departure delays
+airlines$LogDepDelay = log(airlines$DepDelay + 30)
+airlines$LogArrDelay = log(airlines$ArrDelay + 61)
+
+#Plot distributions of transformed data
+hist(airlines$LogDepDelay, breaks=12, xlab= "Log(Departure Delays) (min)", main="Distribution of Departure Delays Transformed", col="cadetblue")
+hist(airlines$LogArrDelay, breaks=12, xlab = "Log(Arrival Delays) (min)", main="Distribution of Arrival Delays Transformed", col="lightpink")
+```
+
+\newpage
+
+**(4)** Deciding to work with the log transformations of both Departure Delay and Arrival Delay, we will perform a bivariate EDA on the initial modeling of their relationship from the raw data and compare it with their logged counterparts. From the original scatterplot(left) in Figure 3, we can see there is an obvious outlier on the top right of the graph at (1092 minutes, 1099 minutes). We have decided to plot the relationship between delays and the estimated regression line with and without this outlier to see if there was high leverage (confirmed there wasn't and plot omitted).
+
+```{r fig.width=10, fig.height=4, fig.cap="Scatterplot of Departure and Arrival Delays"}
+#scatterplot w/ and w/o outlier
+par(mfrow = c(1, 2))
+
+delay.lm1 = lm(ArrDelay~DepDelay, airlines)
+plot(airlines$DepDelay, airlines$ArrDelay, main="Scatterplot of Departure/Arrival Delays", xlab="Departure Delay (w/ outlier)", ylab="Arrival Delay")
+abline(delay.lm1, col="red")
+
+outlier.idx = (which(airlines$DepDelay == max(airlines$DepDelay)))
+airlines.adj = airlines[-c(which(airlines$DepDelay == max(airlines$DepDelay))),]
+#confirmed airlines.adj outlier not super influential
+
+delay.lm2 = lm(LogArrDelay~LogDepDelay, airlines)
+plot(airlines$LogDepDelay, airlines$LogArrDelay, main="Scatterplot of Departure/Arrival Delays (Log)", xlab="Log (Departure Delay)", ylab="Log(Arrival Delay)")
+abline(delay.lm2, col="red")
+
+#summary(delay.lm2)
+```
+
+\newpage
+Additionally, from Figure 3 above, it is visually evident that Log(Arrival Delay) and Log(Departure Delay) have a positive and moderately strong linear relationship. Both plots show that many of the points float above the general trend, potentially leveraging the model in the upward direction. The points also clutter around values below 100 minutes for both axes. However, there seems to be a few outliers with comparably lower values of Log(Arrival Delay) and Log(Departure Delay) to the left half of the scatterplot (~3) that extend the plot left. From the linear model summary of the log transformation, we observe a correlation coefficient of .8244, which indicates a relatively strong correlation between Log(Arrival Delay) and Log(Departure Delay) (though not necessarily linear).
+
+
+# Diagnostics
+
+**(5)** The model we have chosen to construct our regression model is: 
+**log(Arrival Delay + 61) ~ B0 + B1 x log(Departure Delay + 30)**. For our sample case, $\hat{B_{0}} = 1.8628$ and $\hat{B_{1}} = 0.6488$.
+
+**(6)** One major assumption of our model is that the flight records are random and independent. Since we have taken a sample from two decades of records, and flight data are not associated, this assumption can hold. To handle our assumptions of linearity, we want take a closer look at outliers and points that could influence our analyses. From the calculation of influential points using Cook's Distance metric, we can see from Figure 4 that there is 1 main outlier that exceeded the median of the distribution, determined by comparing the values to the quantiles of the F distribution with 2 and n-1= 4885 degrees of freedom. of Log(Arrival Delay) and Log(Departure Delay) that could affect the regression model. The main point was indeed very far from the main cluster of points but doesn't seem to leverage the data too much.
+
+\newpage
+```{r fig.width=6, fig.height=4, fig.cap="Cooks Distance for Transformation"}
+#cooks distance
+model_cooks= cooks.distance(delay.lm2)
+plot(model_cooks, main="Influential Points of Transformed LM", ylab="Cook's Distance", cex.main=0.9)
+#sort(pf(model_cooks, 2, 4885), decreasing=T)
+```
+
+**(6 cont.)** We will proceed by looking at the residuals (errors) of our model. From Figure 5, we can see that the residuals follow a similar pattern as the scatterplot. The points clutter around the middle of the plot and thin out toward the right; the main outlier, labeled 340, also leveraged the residual line upward (though it minorly imapacts the regression line). If our model assumptions are correct, there should be no relationship between the residuals and predictor. However, based on the figure, we can see that the residuals are not evenly distributed and does not follow a homoskedastic scatter about 0. Even if we were to run the residuals excluding the outliers taken from cook's distance, the clustering pattern cannot be ignored. Thus, the residuals violate out assumptions for a linear model.
+
+```{r fig.width=8, fig.height=4, fig.cap="Residuals Plot of the Fitted Model"}
+plot(delay.lm2, which=1)
+```
+
+\newpage
+To back up this observation, we proceed to plot the Normal Q-Q plot of the fitted model with and without the outlier of concern at 340. We observe in Figure 6 that the points in both Q-Q plots do not closely follow the diagonal line near the ends but still have the same shape and pattern. In other words, removing the outlier did not change much. 
+
+```{r fig.width=8, fig.height=4, fig.cap="Normal Q-Q Plots of the Fitted Model"}
+par(mfrow = c(1, 2))
+plot(delay.lm2, which=2, main="With Outlier")
+airlines_rem = airlines[-c(340),]
+delay.lm2.adj = lm(LogArrDelay~LogDepDelay, airlines_rem)
+plot(delay.lm2.adj, which=2, main="Without Outlier")
+```
+
+Thus, after using Cook's Distance to isolate influential data points, and then confirming through our estimated regression line, residuals, and Normal Q-Q plot that the single outlier should not leverage our data in a sample size of 4887, we will keep the outlier in the data for further interpretation. **(7)** The assumptions that underlie our model are reasonable as demonstrated by the figures. There may not be a linear relationship between Arrival and Departure Delays but there is arguably an association factored in with other conditions.
+
+\newpage
+# Model Inference and Results
+
+We conclude that there is no simple linear relationship between Arrival Delays and Departure Delays for flights. That is, an change in unit of Departure Delay (minutes) can not necessarily predict Arrival Delay (minutes). 
+
+**(8)** In our regression model, however, there is strong statistical evidence of there being a relationship between the two variables. We set $H_{0}: B_{1} = 0$ and $H_{0}: B_{1} \neq 0$ as our null and alternative hypotheses for the simple linear regression model. $H_{0}$ tests for no association, a slope of 0, while $H_{A}$ tests for an association. From our conducted hypothesis summary, we conclude a very small and statistically significant p-value < 0.05. We, in turn, reject $H_{0}$ and conclude that there is an association between the predictor (Departure Delay) and response variable (Arrival Delay) in our transformed log linear model.
+
+
+**(9)** Given a mean Departure Delay of 200 minutes, we obtain an estimated arrival delay of 158.42 minutes. The 90% confidence for the expected value of Arrival Delay for all flights given a Departure Delay of 200 minutes is (153.962, 162.97). We are 90% confident that the true population mean of Arrival Delays for the population of Departure Delays of 200 minutes is between 158.42 minutes and 162.9701 minutes.
+
+```{r}
+#Estimate departure delay of 200 minutes.
+#Provide a 90% confidence interval for flights of 200 min departure delays
+
+exp(predict(delay.lm2, newdata=list(LogDepDelay=(log(200+30))), level=0.9, interval="confidence"))-61
+```
+
+**(10)** As stated in our introduction, we have to assess whether weather conditions affect the relationship between Departure and Arrival delays. We decided to study the flight delays when weather conditions were present and not present, separately. 
+
+```{r fig.width=10, fig.height=4, fig.cap="Transformed Delays w/ and w/o Weather Conditions"}
+delay.weather =  airlines[airlines$Weather==1,]
+delay.normal = airlines[airlines$Weather==0,]
+weather.model = lm(LogArrDelay~LogDepDelay+Weather, data=delay.weather)
+normal.model = lm(LogArrDelay~LogDepDelay+Weather, data=delay.normal)
+
+#plot
+par(mfrow = c(1, 2))
+plot(delay.weather$LogDepDelay, delay.weather$LogArrDelay, main="Weather Conditions", xlab="Log (Departure Delay)", ylab="Log(Arrival Delay)")
+#abline(weather.model, col="red")
+
+plot(delay.normal$LogDepDelay, delay.normal$LogArrDelay, main="No Weather Conditions", xlab="Log (Departure Delay)", ylab="Log(Arrival Delay)")
+#abline(normal.model, col="red")
+#summary(weather.model)
+#summary(normal.model)
+```
+
+**(10 cont.)** In Figure 7, we observe that the relationship between Log(Arrival Delays) and Log(Departure Delays) both with and without weather conditions is positive and has a moderately strong linear relationship. After implicitly running the summaries of both models, we observe very small p-values (< 0.05 alpha), indicating a statistically significant relationship for our separately fitted models conditioning on weather disruptions. Subsetting on flights with weather conditions, we are 90% the true slope of the fitted model predicting Arrival Delay from Departure Delay is within (0.552, 0.704). For flights without weather conditions, we are 90% confident the true slope of the fitted model is within (0.63, 0.6516). However, since these confidence intervals overlap, we cannot conclude a significant difference in the fitted models between the relationship of Arrival and Departure delays given weather conditions. In other words, the presence of weather disruptions doesn't seem to affect a flight's relationship between Arrival and Departure delays for our model.
+
+```{r}
+#confidence intervals
+confint(weather.model, level=0.9)
+confint(normal.model, level=0.9)
+```
+
+
+# Conclusion and Discussion
+
+**(11)** After conducting a thorough analysis of the relationship between Departure Delays and Arrival Delays for flights, we decisively conclude that there does not exist a linear relationship between the two variables. The reasoning follows from the violations of a simple linear regression. Even though we assumed our records were i.i.d and transformed both the predictor and response variables to have roughly normal distributions, the scatterplot and residuals vs fitted values demonstrate that the erroros are not normal and uncorrelated. There is evidence of heteroskedasticity about 0, with values fanning starting from low values of both Arrival and Departure Delays. Factoring the presence of weather conditions, we also cannot conclude a significant difference among flights with and without them. However, given relatively high correlation coefficients for th fitted transformed models, we can conduct further analyses and testing for the possibility of another type of association (i.e. Multiple linear regression)
