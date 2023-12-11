@@ -1,0 +1,261 @@
+---
+title: "36-402 DA Exam 2"
+author: "Sarah Li (sarahli)"
+date: "5/5/2023"
+output: pdf_document
+linestretch: 1.241
+fontsize: 12pt
+---
+
+
+```{r setup, include = FALSE}
+## By default, do not include R source code in the PDF. We do not want to see
+## code or output, only your text and figures.
+knitr::opts_chunk$set(echo = FALSE)
+suppressMessages(library(corrplot))
+suppressMessages(library(ggplot2))
+suppressMessages(library(tidyverse))
+library(glm2)
+suppressMessages(library(np))
+```
+
+
+# Introduction
+
+  **(1)** Access to medical care for serious diseases can be financially burdensome, especially in countries with no
+socialized medical systems. It would be ideal for patients to receive check-ups (GHEs) regularly in order to detect
+these diseases and get treated earlier. This approach would enhance public health and outcomes and lower costs. However, 
+not a lot of patients receive check-ups regularly for a variety of reasons, potentially due to cost, inconvenience, lack of
+trust in doctors, or negative prior experiences. Public health researchers from Vietnam thus conducted interviews in Hanoi, Hung Yen,
+Vietnam, by traveling to schools, hospitals, companies, and government agencies in order to find out why people avoid medical checkups.
+In this report, we use the dataset of the resulting 2068 responses to address the following research questions:
+
+  1) On average, how do people rate the value and quality of medical services or information they receive in check-ups?  
+  2) What factors appear to make a person less likely to get a check-up annually?  
+  3) Does evidence suggest that this is an important predictor in getting check-ups, and does this have to do with having health insurance?  
+  
+  **(2)** After modeling and diagnostics, we observe people rate the quality of health check-up information on a scale of 1 to 5 and notice a majority of people found the quality of medical services and checkup information to be average or below average. We also found that job status, beliefs on the importance and effectiveness of health exams, and quality of information were associated with them getting a checkup in the last year. We also find evidence suggesting that health insurance in regards to higher ratings of quality variables does not play an important role in predicting whether a respondent received an exam.
+
+
+# Exploratory Data Analysis
+
+
+  **(1)** The key variables we will explore in our dataset include `Jobstt` (job status), `HealthIns` (has health insurance), `Wsstime` and `Wstmon` (believes check-ups are a waste of time or money), `NotImp` (believes check-ups aren't important), `SuitFreq` (how often check-ups should be done in months), `SuffInfo`, `AttractInfo`, `ImpressInfo`, and `PopularInfo` (ratings on a scale of 1-5 in how a respondent views the information quality they receive in checkups). **(2)** Our response variable is `HadExam` (which indicates whether any of the factors played in role in having a health exam). We decide to treat Had Exam, Job Status, Health Insurance, Waste time, Waste money, Not important, Suit frequency as categorical variables. We will treat the quality of information variables as numerical even though they are ordinal categorical. (Note: all yes or no variables have been converted to 1 or 0).
+  
+```{r}
+vietnam = read.csv("vietnam.csv")
+vietnam$HealthIns = ifelse(vietnam$HealthIns=="yes", 1, 0)
+vietnam$Wsttime = ifelse(vietnam$Wsttime=="yes", 1, 0)
+vietnam$Wstmon = ifelse(vietnam$Wstmon=="yes", 1, 0)
+vietnam$Lessbelqual = ifelse(vietnam$Lessbelqual=="yes", 1, 0)
+vietnam$NotImp = ifelse(vietnam$NotImp=="yes", 1, 0)
+```
+
+\newpage 
+
+```{r, fig.height=8, fig.width=8, fig.cap="Univariate EDA on Categorical Variables"}
+#EDA
+par(mfrow=c(3, 2))
+vietnam_new = vietnam[-c(1,2,3, 4, 5, 7, 8, 9, 13, 15, 16)]
+num_cols = unlist(lapply(vietnam_new, is.numeric))
+names = names(vietnam_new)
+# pairs(num_vietnam, upper.panel=NULL)
+for (i in 1:ncol(vietnam_new)) {
+  if (!num_cols[i] | length(unique(vietnam_new[,i])) <=2) 
+  {barplot(table(vietnam_new[, i]), main=paste("Distribution of ", names[i], sep=""), 
+             col="cyan4", xlab=names[i])}
+}
+```
+  
+  We see from the Figure 1 that most respondents had stable or student jobs, most had health insurance, around the same number of people thought check-ups were and were not a waste of time, most people actually did not think they were a waste of money, an even amount thought they were and weren't important, and most believe check-ups should be done every 6 months.
+  
+
+\newpage
+```{r, fig.height=6, fig.width=6, fig.cap="Univariate EDA on Numerical Variables"}
+par(mfrow=c(2,2))
+for (i in 1:ncol(vietnam_new)) {
+  if (! (!num_cols[i] | length(unique(vietnam_new[,i])) <=2))
+  {hist(vietnam_new[, i], main=paste("Distribution of ", names[i], sep=""), 
+          col="cyan4", xlab=names[i])}
+}
+```
+
+  From Figure 2, we observe for the quality of information variables, that most people found check-up information having average and below average quality consistently, with the majority of ratings being 3 or lower and all the distributions being slightly right skewed.
+
+\newpage
+```{r, fig.cap="Distribution of Response Variable HadExam", fig.height=4, fig.width=4}
+barplot(table(vietnam$HadExam), main="Distribution of Had Exam Checkup", xlab="HadExam", col="cyan4")
+```
+
+**(2)** We observe in our response variable HadExam, 1059 respondents (a little over half) reported having a check-up within the last year, making the distribution roughly even and binomial.
+
+```{r, fig.cap="Bivariate Correpation Plot of Numerical and Binary variables", fig.height=4, fig.width=4}
+vietnam_cor = cbind(HadExam=vietnam$HadExam, vietnam_new[,num_cols])
+corrplot(cor(vietnam_cor), diag = FALSE, type = "lower", method = "shade")
+```
+
+\newpage
+   **(3)** From bivariate EDA in Figure 4 on the variables of interest in the correlation plot, we observe most positive correlation among the quality of information variables. It seems that respondents had similar sentiment regarding how sufficient, attractive, popular, or impressive their check-up information were. In general, the quality of medical service also shows to have positive correlation, with those who believe check-ups were a waste of time also roughly believe they were a waste of money and not important.
+  
+```{r, fig.height=3, fig.width=4, fig.cap="Stacked Barplot of Medical Quality Variable Ratings", message=F}
+par(mfrow=c(1, 2))
+df2 = data.frame(vars = rep(c('Wsttime', 'Wstmon', 'NotImp'), each=2068),
+                 response = c(vietnam$Wsttime, vietnam$Wstmon, vietnam$NotImp))
+counts = df2 %>% group_by(vars, response) %>% summarize(count=n())
+counts %>% ggplot(aes(vars, count, fill=as.factor(response))) +
+  geom_bar(stat="identity") +
+  labs(y="Number of Respondents", x="Quality of Medical Service", fill="Response",
+       title="Stacked Bar Plot of Medical Quality Variables")
+```
+
+```{r, fig.height=3, fig.width=4, fig.cap ="Proportional Barplot of Information Quality Variable Ratings"}
+df = data.frame(vars = rep(c('SuffInfo', 'AttractInfo', 'ImpressInfo','PopularInfo'), each=2068),
+                 number = c(vietnam$SuffInfo, vietnam$AttractInfo, vietnam$ImpressInfo, vietnam$PopularInfo))
+df %>% ggplot(aes(vars, number, fill=as.factor(number))) +
+  geom_bar(stat="identity", position=position_fill(reverse=T)) +
+  labs(y="Proportion of Respondents", x="Quality of Medical Information", 
+       title =" Proportional Barplot of Quality Variables", fill="Ratings")
+```
+
+  **(3) cont** We observe in the next two Figures 5 and 6  that the distribution of ratings for quality of medical serve, that the average sentiment for non-importance and waste of time was neutral with even distributions; however, even with this in mind, more people still believed check-ups were not a waste of money than worth the pay. As for the quality of information, the attractiveness, impressiveness, popularity, and sufficiency all followed roughly the same marginal rating proportions. Overall, most respondents believed that the quality of information was average and not the best (indicated by proportions of <=3 ratings lying above the 0.5 line). 
+
+\newpage
+  **(4)** Last for EDA, we want to address some of the findings we may consider while modeling. First we note the continuous scale of ratings that included decimals, which is why we treated the ordinal values as continuous. Additionally, the bivariate comparisons seem to suggest that there may be correlation among the variables regarding quality of medical services and quality of check-up information among themselves. We will do our best to keep this caution in mind when undergoing the assumptions of our modeling. Another important note concerning our response variable HadExam is that, from the correlation plot, we observe no significant correlation between itself and any other predictor, which we did not expect. Further analysis would have to be done in modeling to see what kind of relationship holds for predicting our response.
+
+# Initial Modeling and Diagnostics
+
+  **(1)** After initial data analysis, we move on to modeling and formulate a generalized linear model (call Model 1) that predicts HadExam as a
+function of all the demographic variables in the dataset and quality of medical service variables, excluding health insurance. (We note that this model includes variables we omitted in the EDA as they will be eliminated in the future.)
+
+```{r}
+vietnam_mod1 = vietnam[,c(3:9, 11:17)]
+mod1 = glm(HadExam~., vietnam_mod1, family="binomial")
+#summary(mod1)
+probs1 = predict(mod1, type="response")
+
+# plot(probs1, log(probs1/(1-probs1)), main="Model 1 Log Odds", 
+#      xlab="Odds", ylab="Log Odds", pch=".")
+#car::vif(mod1)
+```
+
+  From the summary output of Model 1, we observe many high p-values for most of the predictors, indicating that they do not contribute much to the model. From the correlation matrix and vif (variance inflation factors) test, we observe evidence of collinearity among some predictors, with height, weight, and BMI having high inflation values over 5. Again, these demograhic variables were omitted during EDA but still contained within the dataset. As for model diagnostics, since this is a logistic regression model, the residuals do not have to meet the normality assumption. Instead, we note that the assumptions met are that the variables are independent but one that is not met is multicollinearity. Thus, our initial model is not the best and we proceed to stepwise elimination.
+
+   
+```{r}
+mod2 = step(mod1, direction="backward", trace=0)
+#summary(mod2)
+probs2 = predict(mod2, type="response")
+# plot(probs2, log(probs2/(1-probs2)), main="Model 2 Log Odds", 
+#      xlab="Odds", ylab="Log Odds", pch=".")
+#car::vif(mod2)
+```
+  
+  **(2)** We perform stepwise regression using the backward direction until the AIC error is minimized. The final model (call Model 2) decides to drop variables Age, Sex, Height, Weight, BMI, Wstmon, Lessbelqual, Tangibles, and Empathy. The resulting variables that contribute most to model significance with low p-values include retired, stable, or student job statuses (Jobstt), belief that check-ups are a waste of time (Wsttime), belief that check-ups are unimportant (NotImp), and the belief that checkups should be done less than equal to 18 months (SuitFreq).  Using the vif test again, we observe no multicollinearity concerns among any of the predictors, making this model meet our logistic regression assumptions given independent samples.
+   
+   
+```{r}
+#keep Jobstt, Wsttime, NotImp, SuitFreq
+vietnam_mod3 = vietnam[,c(3, 6, 10, 11, 14, 17, 18:21)]
+mod3 = glm(HadExam ~. +
+           HealthIns*(SuffInfo+AttractInfo+ImpressInfo+PopularInfo), 
+           vietnam_mod3, family="binomial")
+#summary(mod3)
+probs3 = predict(mod3, type="response")
+
+# plot(probs3, log(probs3/(1-probs3)), main="Model 3 Log Odds", 
+#      xlab="Odds", ylab="Log Odds", pch=".")
+#car::vif(mod3)
+```
+
+  **(3)** Interested in seeing how Health Insurance may play a role in having an exam, we add this to the model and the quality of information variables with their interactions. From Model 3, we include the interaction between whether or not the respondent had health insurance and variables indicating the quality of information they received. From the vif test, we are not concerned much about multicollinearity of the newly added interaction terms of the model but there are many newly added terms with relatively high p-values in the summary output now.
+
+  **(4)** To check whether our model is a good fit of the data, we conduct a chi-squared goodness of fit test with a 2403.6 residual deviance on 2048 degrees of freedom.
+
+  $H_0:$ The model is correct. The Residual deviance follows $X^2_{n-q}$  
+  $H_A:$ The model is not a good fit.
+
+
+```{r}
+#use residual deviance
+#1-pchisq(mod3$deviance, 2048)
+```
+
+  Since the result of the GOF test is very small $pval=6.6856e-08$, we reject the null hypothesis that the model is correct and conclude that the fit of Model 3 is not good. This may be due to the abundance of predictor variables in the model creating noise.
+
+```{r}
+#A model is called well-calibrated if the estimated probabilities P(Y = 1 | X) are close to the true
+#fractions of Y = 1 cases for different values of X
+#c(mean(vietnam$HadExam), mean(fitted(mod3)))
+```
+
+  **(5)** Next, we check if Model is well calibrated in Figure 7. The proportions of respondents who had taken an exam within the last year equal the average prediction (0.5121), making the model trivially well-calibrated. To check how well-calibrated Model 3 is, we consider using a kernel smoother with a bandwidth of 0.05 to predict HadExam using the estimated probabilities and check how close the values fit the line y=x. 
+
+```{r fig.cap="Calibration Plot of Model 3 with Interactions"}
+#try kernel smoothing
+kernel_mod3 = npreg(vietnam$HadExam~fitted(mod3), bws=0.05)
+order = order(fitted(mod3))
+plot(fitted(mod3)[order], fitted(kernel_mod3)[order], xlim=c(0,1), ylim=c(0,1),
+     pch=".", type="l",xlab="Model 3 fitted values", 
+     main="Calibration Plot for Model 3", ylab="Smoothed fraction of Y=1")
+abline(0, 1, col="red")
+```
+
+  The kernel smoother seems to follow the line relative closely, making the model decently well-calibrated and its predicted probabilities matching the observed proportions of outcomes in the data. However, our model did not pass the goodness-of-fit test. Since the interaction model includes a lot of factors, we may consider running stepwise regression once again (AIC) to eliminate variables that don't hold much predictive power. The summary output also demonstrates many of the predictors having high p-values and relatively low contribution to the model. This would help remove noise and potential collinearity.
+
+\newpage
+# Model Inference and Results
+
+```{r}
+#exp(c(0.620746, 0.173015, -0.009506, -0.044227, -0.075064))
+#summary(mod3)
+```
+
+  **(1)** When keeping other constants fixed, the respective multiplicative odds of rating SuffInfo, AttractInfo, ImpressInfo, or PopularInfo one unit higher for a person with health insurance would have been around 1.189, 0.991, 0.967, and 0.928 compared to a person without health insurance. These odds are all relatively close to 1, making the difference trivial. Additionally, we note that none of the added information quality variables and their interactions with health insurance hold much predictive power in the model, with all their p-values being large in the summary output. Thus, there is no notable difference regarding the increase of check-up information ratings for those who had and did not have health insurance.
+
+
+  **(2)** To confirm this, we conduct a chi-squared model selection test on Model 3 with and without interactions with the following hypotheses:  
+
+   
+```{r}
+mod3_red = glm(HadExam ~ ., vietnam_mod3, family="binomial")
+#summary(mod3_red)
+#anova(mod3_red, mod3, test="Chisq")
+#pchisq(1.2818, 4, F, F)
+```
+
+  $H_0$: The reduced model is true (Model 3 without interactions)  
+  $H_A$: The full model (Model 3 with interactions) is true and is a significant improvement on the reduced model  
+  
+  We observe a test statistic of $Dev=1.2818$ and a p-value of $P(X^2\geq1.2818) = 0.8644$. Since the p-value is very large (>0.05), we fail to reject the null hypothesis and cannot conclude that the interactions between having health insurance and ratings of checkup information qualities made a significant difference or improvement on Model 3. That is, when observing increasing ratings of the information quality obtained from check-up, whether the respondent had or did not have health insurance does not play a role in determining whether he or she had taken an exam in the last year.
+
+   
+```{r}
+coeffs = coef(mod3_red)
+x = c(rep(0,12),rep(5,4))
+# y = c(rep(0,12),rep(1,4))
+odds_x = sum(coeffs * x)
+# odds_y = exp(sum(coeffs * y))
+# ratio = odds_x / odds_y
+# exp(odds_x)
+# ggplot(vietnam_mod3, aes(HadExam, fill=as.factor(SuffInfo), color=as.factor(SuffInfo))) + geom_histogram()
+# ggplot(vietnam_mod3, aes(HadExam, fill=as.factor(AttractInfo), color=as.factor(AttractInfo))) + geom_histogram()
+# ggplot(vietnam_mod3, aes(HadExam, fill=as.factor(ImpressInfo), color=as.factor(ImpressInfo))) + geom_histogram()
+# ggplot(vietnam_mod3, aes(HadExam, fill=as.factor(PopularInfo), color=as.factor(PopularInfo))) + geom_histogram()
+```
+
+  **(3)** To summarize this finding in a more high-level manner for the Assistant Minister, we calculate the ratio between the odds of having a checkup for people with most belief versus the least belief in the quality of information. Since this does not depend on a person's health insurance, we use the coefficients from the reduced model and report that, on average, respondents with most belief in information quality are 1.509 times more likely receive a check-up than those with least belief, holding other variables constant. **(4)** We are 95% confident that the true odds ratio of people with the most belief compared to people with the least belief in the quality of check-up information lies within the interval (0.9095, 2.5021)
+
+```{r}
+var = vcov(mod3_red)
+se = sqrt(x %*% var %*% x)
+ci = exp(c(odds_x - 2*se, odds_x + 2*se))
+```
+
+
+# Conclusions
+
+**(1)** Even though our models did not indicate a relationship between Health Insurance and the belief in the quality of medical service or medical information having an effect on whether respondents took a health exam, we still discuss some notable findings. Particularly from EDA, we notice that most people had neutral or below average sentiment on the quality of medical services or information: on average, they believed that the sufficiency, attractiveness, impressiveness, and popularity of information received was very average or below average. They didn't particularly believe checkups were a waste of money however, just that that were not that valuable. Additionally, looking in closer detail at the coefficients of summary outputs, we observe in the reduced Model 3, that the coefficients for Waste of time, Not important, Sufficient information, Impressive information, Student/Unstable job status, and the belief that checkups should be done once every 18 months or greater were all negative. These variables contribute to how likely someone is to get an annual check-up. **(2)** These intuitively make sense as those who don't believe in or can afford checkups will not go (young people or not financially adequate people). Plus, those with beliefs in the quality of services or information will be influenced to go or not as well; many people do not trust the input of doctors and have differing beliefs about their own conditions. Health care can also get very expensive nowadays, which is why we might observe that unstable job status are correlated with lower odds of getting a checkup. Thus, we can reason how these factors played a role in lowering someone's willingness to get a health exam and why health insurance might not play a role in this.  
+
+**(3)** Lastly, we discuss the limitations of our findings and modeling. Our dataset contained many variables to begin with and thus could have a lot of added noise or hidden relationships among the variables (with potential of confounders). Our data is also not representative of how people generally view the healthcare industry and what may influence them to get an annual checkup as different regions have different policies and variations of healthcare. We also did not try interactions outside the questions or run stepwise regression multiple times in order to obtain a simpler and better model. Additionally, we did not plot every single linear relationship between the independent variables and their log odds in order to confirm our logistic regression assumptions; we will do that in the future. Since the Assistant Minister also asked a causual inference question related to having health insurance, we are unable to detect that relationship but can only provided an association among the quality variables and the response. We would have to conduct more studies and research to answer his question confidently.
+
+

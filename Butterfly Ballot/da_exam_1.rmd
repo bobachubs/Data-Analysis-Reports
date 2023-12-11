@@ -1,0 +1,319 @@
+---
+title: "36-402 DA Exam One"
+author: "Sarah Li (sarahli)"
+date: "3/24/2023"
+output: pdf_document
+linestretch: 1.241
+fontsize: 12pt
+fontfamily: mathpazo
+---
+
+```{r setup, include = FALSE}
+## By default, do not include R source code in the PDF. We do not want to see
+## code, only your text and figures.
+knitr::opts_chunk$set(echo = FALSE)
+suppressMessages(library(np))
+library(splines)
+```
+
+
+# Introduction
+
+  **(1)** In the 2000 U.S. Presidential Election, large speculation had risen after George Bush (Republican) defeated Al Gore (Democrat) by a measly margin of 537 votes in Florida. If Bush hadn't won over Florida, Al Gore would have became president. Many in-person voters from Palm Beach county claimed to have voted for Buchanan instead of Gore using the butterfly ballot due to misalignment. This shortage would have taken away the votes Gore needed to defeat Bush. In this data report, we will be analyzing whether the difference between the proportion of election day votes for Buchanan and the proportion of absentee votes for Buchanan in PBC was larger than what we would expect, if it difference is statistically significant. 
+
+ **(2)** We will use the available datasets of countyFL, and ballotPBC to do our analyses. The former contains the election-day vote counts for the 67 counties in Florida for Bush, Gore, and Buchanan, and the latter contains partial and anonymized individual level ballots for presidential and senatorial votes in Palm Beach County.
+
+   
+**(3)** After, doing diagnostics on three models, we decided after transforming all the variables in countyFL, a simple linear model using the log (Gore votes) was the best predictor for our response absbuchananDiff. It had a relatively low training error but also the best prediction error. To go along with that, we measured a 95% confidence interval for the the difference in Buchanan votes given that day in Palm Beach county and observed that the original observed difference lied outside of the interval, deeming it surprising and statistically significant. All in all, we conclude Buchanan should have received around 2430 less votes on election day, which could have allowed Gore to win.
+
+# Exploratory Data Analysis
+
+**(1)** We begin by creating four new variables in our county-level data: totalVotes, buchananVotesProp, absBuchananVotesProp, and absBuchananDiff. absbuchananDiff (the difference between the proportion of election day votes for Buchanan and the proportion of absentee votes for Buchanan) is our target response variable. A snippet of the dataset is shown below.
+
+```{r}
+county = read.csv("countyFL.csv")
+county$totalVotes = apply(county[2:4], 1, sum)
+county$absBuchananVotesProp = county$absBuchanan/county$absVotes
+county$absBuchananDiff = county$buchananVotes/county$totalVotes - county$absBuchananVotesProp
+head(county)
+```
+**(2)** Before modeling, we must conduct some visual diagnositcs on our key variables. Since the original distributions of all the potential predictors (not absBuchananDiff) are heavily skewed to the right, we transform them using log and do any necessary shifting to avoid NaN values. The transformed distributions are shown in Figure 1 below.
+
+\newpage
+
+```{r fig.width=10, fig.height=8, fig.cap="EDA on the Variables"}
+#apply((county[2:9]), 2, hist)
+par(mfrow=c(3, 3))
+
+county_new = cbind(county$county, log(county[,2:8]), county$absBuchananDiff)
+colnames(county_new)[2:8] = c(paste("log_", colnames(county_new[2:8]), sep=""))
+colnames(county_new)[9] = "absBuchananDiff"
+colnames(county_new)[1] = "county"
+
+names = c("Gore Votes", "Bush Votes", "Buchanan Votes", "Absentee Votes", 
+         "Absentee Buchanan Votes", "Total Votes", "Absentee Buchanan Votes Prop", 
+         "Absentee Buchanan Difference")
+for (idx in 2:8) {
+  hist(county_new[, idx], main = paste("Log Distribution of", names[idx-1]), 
+       xlab=colnames(county_new)[idx-1], col="cyan4")
+}
+
+#testing out an indicator variable for dem vs repub
+dem_counties = c("Gadsden", "Leon", "Jefferson", "Alachua", "Flager", "Volusia", "Hernando", "Pasco",
+               "Pinellas", "Orange", "Osceola", "St. Lucie", "Palm Beach", "Broward", "Miami-Dade", "Monroe")
+county_new$isDem = ifelse(county_new$county %in% dem_counties, 1, 0)
+
+hist(county_new[, 9], main = paste("Distribution of", names[8]),
+       xlab=colnames(county_new)[9], col="cyan4")
+```
+
+**(3)** From the histograms, we can see that absBuchananDiff is already nearly symmetric and unimodal. Transforming it using log did not change the distribution. The other variables, after transformation, became more symmetric, though log_bushVotes and log_buchananVotes seem to show signs of possible multi-modality. We will proceed with this caution in mind.  
+
+**(4)** After assessing the quality of our potential predictors and transforming them as necessary, we want to ensure that there isn't high correlation among the predictors given the original data. To do that, we construct a pairs plot and visually analyze both that and the correlation matrix. 
+
+\newpage
+```{r fig.width=8, fig.height=6, fig.cap="Pairs Plot of CountyFL Vars"}
+pairs(county[2:9])
+#cor(county[2:9])
+```
+
+  **(5)** From Figure 2, the pairs plot demonstrated that there was heavy correlation among any pair of predictors that did not include the response variable. The correlation coefficients (matrix ommitted from report) for any two possible predictors was also relatively high. Additionally, absBuchananDiff had been calculated using buchananVotes, totalVotes, absBuchananVotesProp, absBuchanan, and absVotes. So to avoid collinearity, we decided to omit these variables as predictors and look toward just log_goreVotes and log_bushVotes for modeling. But we still keep in mind log_bushVotes' slightly bimodal distribution: there could be implication of the errors being dependent or following a non-normal distribution, which would violate our assumptions of linearity.
+  
+  **(6)** Using the individual ballot-level data, the second dataset, we make a table showing the total number of votes for and not for Buchanan, for absentee versus non-absentee ballots and ballots with a vote for Nelson, Deckard, or neither.
+
+```{r}
+#table for total number of votes for and not for Buchanan, for absentee versus non-absentee ballots and ballots with a vote for Nelson, Deckard, or neither
+
+ballot = read.csv("ballotPBC.csv")
+tabA = table(ballot$ibuchanan, ballot$isabs)
+rownames(tabA) = paste(ifelse(rownames(tabA) == 0, "Not Buchanan", "For Buchanan"))
+colnames(tabA) = paste(ifelse(colnames(tabA) == 0, "Non-Absentee", "Absentee"))
+tabA
+
+tabB = table(ballot$inelson, ballot$ideckard)
+rownames(tabB) = paste(ifelse(rownames(tabB) == 0, "Not Nelson", "For Nelson"))
+colnames(tabB) = paste(ifelse(colnames(tabB) == 0, "Not Deckard", "For Deckard"))
+tabB
+```
+
+  **(7)** Interestingly from the tables, we can see that there are not many voters overall that were absentee compared to non-absentee. And the proportion of those who did vote for buchanan given they were non-absentee is higher than given they were absentee (.0085>.0022). This could be a possible indicator of there being more votes for Buchanan in person than expected. Additionally, the ballot data shows that Palm Beach voted significantly more for Democratic (Al Gore was also Democratic) candidate Nelson than any other candidate. 
+  
+# Modeling & Diagnostics
+
+  **(1, 2)**. After choosing log_goreVotes as our predictor of interest, we begin by modeling with three types of models removing Palm Beach from the dataset: linear, kernel smoothing, and spline smoothing. For visual purposes, we decided to indicate a county as being democratic (blue) or republican (red) by by some external research before the 2000 election.
+  
+```{r fig.width=8, fig.height=6, fig.cap= "Linear Model of log Gore Votes"}
+#remove palm beach
+#  i. a linear model (If you decided to use transformations of any variable, use those when fitting your model.)
+county_mod = county_new[-which(county_new$county=="Palm Beach"),]
+lm.1 = lm(absBuchananDiff~log_goreVotes, county_mod)
+# lm.2 = lm(absBuchananDiff~log_bushVotes, county_mod)
+# lm.3 = lm(absBuchananDiff~log_goreVotes+log_bushVotes, county_mod)
+par(mfrow=c(2,2))
+plot(lm.1, which=c(1,2), col=ifelse(county_mod$isDem, "blue", "red"))
+# plot(lm.2, which=c(1,2))
+# plot(lm.3, which=c(1,2))
+# summary(lm.1)
+# summary(lm.2)
+# summary(lm.3)
+plot(county_mod$log_goreVotes, county_mod$absBuchananDiff,col=ifelse(county_mod$isDem, "blue", "red"),
+     main="Fitted line on original data", xlab="log Gore Votes", ylab="Absentee Buchanan Diff")
+lines(county_mod$log_goreVotes, fitted(lm.1))
+```
+  
+  For the linear model, we have chosen to use only log_goreVotes as the predictor for absBuchananDiff. Consequently, we created three potential linear models to fit the data, one using only log_goreVotes as the predictor, one using only log_bushVotes, and one using both. From our diagnosis of the models' corresponding summary output, residuals vs fitted plot, and normal q-q plot, the model using only log_goreVotes had the lowest p-value = 0.00124 of the three models, with the coefficient of log_goreVotes also having a low p-value of 0.0012. And so we choose to use log_goreVotes as our only predictor. Contextually, this decision also makes sense given that the discrepancy stated in our research question originates from voters mistakenly choosing Buchanan instead of Al Gore. The residuals plot shows a slight fanning toward the right, and there are deviations of the ends of the q-q plot that might indicate violations of normality; however, the plots aren't too bad so we proceed. 
+
+ **(1, 2) cont** Next, we do a kernel regression on the same dataset omitting Palm Beach.
+ 
+```{r fig.width=8, fig.height=6, fig.cap = "Diagnosis for Kernel Regression (bw=0.6786879)"}
+#ii. a kernel regression, with bandwidths for each predictor chosen as the sample standard deviation of the predictor divided by n^(1/5), where n is the number of data points.
+bw = sd(county_mod[ ,2]) / nrow(county_mod)^(0.2)
+k_reg = npreg(absBuchananDiff~log_goreVotes, county_mod, bws=bw, residuals=T)
+par(mfrow=c(2, 2))
+plot(fitted(k_reg), residuals(k_reg), xlab="Fitted Vals for K-Reg", ylab="Residuals",
+     col=ifelse(county_mod$isDem, "blue", "red"), main="Fitted vs Residuals")
+abline(h=0)
+plot(county_mod$log_goreVotes, residuals(k_reg), xlab="log Gore Votes", ylab="Residuals",  
+     col=ifelse(county_mod$isDem, "blue", "red"), main="log Gore Votes vs. Residuals")
+abline(h=0)
+qqnorm(fitted(k_reg), col=ifelse(county_mod$isDem, "blue", "red"))
+qqline(fitted(k_reg))
+train_mse_kreg = mean(residuals(k_reg) ^ 2)
+#train MSE = 6.805895e-06
+kernmod = ksmooth(county_mod$log_goreVotes, county_mod$absBuchananDiff, kernel="normal", bandwidth=bw)
+plot(county_mod$log_goreVotes, county_mod$absBuchananDiff, main="Ksmoothing Line Prediction for log Gore Votes",
+      xlab="log Gore Votes", ylab="absBuchananDiff")
+lines(kernmod$x, kernmod$y, col="red",lwd=1)
+
+```
+Similarly, the residuals vs fitted and log_goreVotes vs residuals plot have a slight fanning shape. The ends of the q-q plot once again deviate from the diagonal line. The estimated line on the original data is displayed in Fig 4 above, with a bandwidth of .0679.
+
+ **(1, 2) cont** Lastly, we fit a Smoothing Splines model using only log_goreVotes using the default parameters.
+ 
+```{r fig.width=8, fig.height=6, fig.cap="Diagnosis for Smoothing Splines"}
+# iii. a smoothing spline with a single predictor that you decide is a good choice based on your EDA (use the default value of the smoothing parameter)
+par(mfrow=c(2, 2))
+spline_mod = smooth.spline(county_mod$log_goreVotes,county_mod$absBuchananDiff)
+
+plot(fitted(spline_mod), residuals(spline_mod), xlab="Fitted Vals for Smoothing Splines", ylab="Residuals",
+     col=ifelse(county_mod$isDem, "blue", "red"), main="Fitted vs Residuals")
+abline(h=0)
+plot(county_mod$log_goreVotes, residuals(spline_mod), xlab="log Gore Votes", ylab="Residuals",  
+     col=ifelse(county_mod$isDem, "blue", "red"), main="log Gore Votes vs. Residuals")
+abline(h=0)
+qqnorm(fitted(spline_mod), col=ifelse(county_mod$isDem, "blue", "red"))
+qqline(fitted(spline_mod))
+plot(county_mod$log_goreVotes,county_mod$absBuchananDiff, main="Smoothing Spline using log_goreVotes",
+     col=ifelse(county_mod$isDem, "blue", "red"), xlab="log Gore Votes", ylab="absentee Buchanan Diff")
+lines(spline_mod$x, spline_mod$y, col="red", lwd=1)
+```
+  The residuals indicate the possibility of there being an outlier toward the far right of the data; there is also an indication of fanning from the log_goreVotes vs residuals plot. The outlier seems to be very apparent in the q-q plot and spline graph as well. Overall, the residuals seem to possibly violate assumptions of independence, constant variance, and noramality like the previous plots, though more apparent in this one. The spline is graphed on top of the original data for visual purposes. As an improvement for all models, I might try to remove the outlier than might have skewed or leveraged the data (Liberty County) or tried natural cubic splining with different knot sizes to fit the third model. Otherwise, given the small sample size and possibly inherent dependency, other transformations might be too excessive.
+  
+ **(3)** Next, we use cross-validation to determine which of the models fit best to the data in terms of prediction or generalization error, omitting PBC.
+ 
+```{r}
+#3.Use cross-validation to determine which of the models fit best to the data, in terms of prediction error.
+set.seed(50)
+
+loocv_err = matrix(nrow = nrow(county_mod), ncol = 3)
+
+for(i in 1:nrow(county_mod)) {
+  county_i = county_mod[-i,]
+  mod1_i = lm(absBuchananDiff~log_goreVotes, county_i)
+  mod1_i_pred = predict(mod1_i, county_mod[i,])
+  bw = sd(county_i[,2]) / nrow(county_i)^(0.2)
+  mod2_i = npreg(absBuchananDiff~log_goreVotes, county_i, bws=bw, newdata = county_mod[i,], residuals=T)
+  mod2_i_pred = mod2_i$mean
+  mod3_i = smooth.spline(county_i$log_goreVotes, county_i$absBuchananDiff)
+  mod3_i_pred = predict(mod3_i, county_mod[i,]$log_goreVotes)$y
+  loocv_err[i,] = county_mod$absBuchananDiff[i]-c(mod1_i_pred, mod2_i_pred, mod3_i_pred)
+}
+
+train_mse1 = mean(residuals(lm.1)^2)
+train_mse2 = mean(residuals(k_reg)^2)
+train_mse3 = mean(residuals(spline_mod)^2)
+
+loocvs = colMeans(loocv_err^2)
+data.frame(model = c("Model 1", "Model 2", "Model 3"),
+          training_error = c(train_mse1, train_mse2, train_mse3),
+          loocv_score = loocvs)
+```
+  We choose LOOCV given the small size of the dataset. **(4)** Looking at our table of training errors and loocv scores, we see that Model 3 using smoothing splines performed best on training data, while Model 1 using a simple linear regression on log_goreVotes performed best on testing data. Models 1 and 2 had similar training and validation errors, though all errors are really low to begin with, with the difference between each minimal. However, we want to choose the model that would generalize to unseen or other testing data, so we pick Model 1 as the best one. Revisiting the residuals of each model, we take note that given the 66 data points (a relatively small sample size), the residuals vs fitted values don't completely follow a heteroskedastic shape about 0. The is a slight fanning toward the right and a possible outlier for Liberty county; the residuals don't seem to be highly correlated, though we cannot visually conclude that there is constant variance among the errors in any of the models. **(5)** Thus, given the uncertainty of our residuals in relation to our assumptions of normality, independence, and constant variance, it is best to perform a nonparametric bootstrap in the form of sampling n cases in order to measure uncertainty. This method does not assume accurate linear model fit and is more lenient on residual assumptions.
+  
+
+**(6)** Now we continue with plotting the conditional regression functions for the individual ballot-level data in Palm Beach. To get a sense of the probability a voter might have voted for Buchanan given that vote was absentee or not. Additionally, we would like to make take into consideration the voter's previous senatorial vote and see if the party alignment makes sense, given that Buchanan is democratic, while senators Nelson and Deckard are Democratic and Republican respectively. 
+
+\newpage
+
+```{r fig.height=4, fig.width=6, fig.cap="Conditional Regresion for Buchanan given Absentee and by Senatorial Votes"}
+#conditional regression plots
+suppressMessages(library(tidyverse))
+x0_vals = rep(c(0), 3)
+x1_vals = rep(c(1), 3)
+abs = c(32/17779, 8/99, 41/18534)
+notabs = c(2350/228455, 59/1000, 852/151994)
+
+plot(c(0, 1), c(0, 0.1), col="white", 
+     main="Conditional Regression for the Probability of Voting 
+     for Buchanan conditioned on Absentee and by Senatorial Vote",
+     xlab="Absentee=0, Non-Absentee=1", ylab="Prob of Voting for Buchanan")
+segments(x0_vals, abs, x1_vals, notabs, col=c("blue", "red", "black"))
+legend("top", legend=c("Nelson", "Deckard", "Neither"), horiz=T, lty=1, col=c("blue", "red", "black"))
+```
+
+  The figure demonstrates that the proportion of Buchanan voters was greater for Non-absentee (in person) voters than Absentee voters, given that they either voted for Nelson or neither party. The probability of voting for Buchanan decreased for Non-absentee voters than absentee voters given that they voted for Deckard in the senatorial elections.
+
+# Results
+
+**(1)** Next, we conduct bootstrapping for the selected linear model for the county data for the expected difference between the proportion of election day votes for Buchanan and the proportion of absentee votes for Buchanan in Palm Beach County. 
+
+```{r, cache=T}
+#bootstrap with cases
+B = 100
+preds = numeric(B)
+N = nrow(county_mod)
+
+for (b in 1:B) {
+  boots = sample(N, N, replace=T)
+  tempdata = county_mod[boots,]
+  fit_b = lm(absBuchananDiff~log_goreVotes, data=tempdata)
+  preds[b] = predict(fit_b)[50]
+}
+
+data.frame(Method = "Bootrap Cases",
+  CI.Lower = quantile(preds, .025), CI.Upper = quantile(preds, .975))
+#county_new[50,]$absBuchananDiff
+```
+```{r, cache=T, fig.width=6, fig.height=4, fig.cap="Histogram of the predictions of the differences of PBC"}
+hist(preds, col="cyan4", xlab="predictions",
+     main="Distribution of Predictions through Bootrapping Cases")
+```
+
+**(2)**
+  We conduct a nonparametric bootstrap by resampling cases given the analyses of our residual assumptions. Since there are only 66 data points, we decide to set B to 100 in order to avoid making the confidence too narrow. We are 95% confidence that the true value of absBuchananDiff given Palm Beach county is within the interval (-0.0006402, 0.0035033). Interestingly, the actual value of for Palm Beach in the original dataset is 0.0058, which is outside of the confidence interval. This implies that the value fo absBuchananDiff for Palm Beach county is statistically significant and greater than what we expect to observe, as this variable is defined as the difference between the proportion of election day votes and absentee votes for Buchanan.
+
+**(3)** Next, we compute the effect of the election day ballot versus absentee ballot on the proportion fo votes for Buchanan, adjusting for senatorial vote and using empirical senate vote (non-absentee). For this causal effect to be valid, we assume that the absentee and non-absentee voting was randomly assigned, or that the voting type is not dependent on the subject. This might not entirely be the case, but we proceed to calculate the relevant effect.
+
+```{r}
+#obtained from interaction plot, ommitted
+ballot$isenatorial = ballot$inelson + 2*ballot$ideckard
+tab_isenatorial = data.frame(rbind(table(ballot$isenatorial)))
+colnames(tab_isenatorial) = c("other", "nelson", "deckard")
+
+neither = (0.0056055-0.0033933) - 0.0056055
+nelson = (0.0056055-0.0033933+0.0046810-0.0050933) - (0.0056055+0.0046810)
+deckard = (0.0056055-0.0033933+0.0533945+0.0252014) - (0.0056055+0.0533945)
+
+ballot_notabs = ballot[which(ballot$isabs == 0),]
+
+otherdist = nrow(ballot_notabs[ballot_notabs$isenatorial==0,])/nrow(ballot_notabs)
+nelsondist = nrow(ballot_notabs[ballot_notabs$isenatorial==1,])/nrow(ballot_notabs)
+deckarddist = nrow(ballot_notabs[ballot_notabs$isenatorial==2,])/nrow(ballot_notabs)
+
+causal_effect = neither*otherdist+nelson*nelsondist+deckard*deckarddist
+#causal_effect * nrow(ballot_notabs)
+```
+
+  **(4)** The causal effect we calculated to be is -0.006378, and the expected number of votes we expect Buchanan to have received is calculated to be -2433, or 2433 less votes at PBC on election day. Buchanan would have gotten 979 votes in PBC without the butterfly ballot assuming no other confounding variables. 
+  
+  **(5)** To construct the 95% CI for this statistic, we do another 95% confidence interval for the expected number of votes for Buchanan with B=500 draws since the data size is much bigger The result is (-2439.332, -2419.414), meaning we are 95% confident the expected number of votes for Buchanan in PBC for the day is -2429.373. Our previous calculated value of around -2433 votes (rounded) is within the range. Since this value is in our range and our previously estimated difference seemed to fall out of our confidence interval, we conclude that the votes for Buchanan in PBC was statistically different and significant, wiht the amount of votes ranging higher than expected for him given the butterfly ballot. More specific to the research question, the expected difference between the proportion of election day votes for Buchanan and the proportion of absentee votes for Buchanan was significantly higher in our observed data compared to our bootstrap casing with uncertainty. 
+  
+```{r}
+# B = 500
+# votes = numeric(B)
+# N = nrow(ballot)
+# for (b in 1:B) {
+#   boots = sample(N, N, replace=T)
+#   tempdata = ballot[boots,]
+#   
+#   fit_b = lm(ibuchanan~isabs*factor(isenatorial), data=tempdata)
+#   
+#   intercept = fit_b[[1]][[1]]
+#   isabs = fit_b[[1]][[2]]
+#   factor1 = fit_b[[1]][[3]]
+#   factor2 = fit_b[[1]][[4]]
+#   isabs_factor1 = fit_b[[1]][[5]]
+#   isabs_factor2 = fit_b[[1]][[6]]
+#   
+#   other = (intercept+isabs) - intercept
+#   nelson = (intercept+isabs+factor1+isabs_factor1) - (intercept+factor1)
+#   deckard = (intercept+isabs+factor2+isabs_factor2) - (intercept+factor2)
+#   
+#   ballot_notabs = ballot[ballot$isabs == 0,]
+#   otherdist = nrow(ballot_notabs[ballot_notabs$isenatorial==0,])/nrow(ballot_notabs)
+#   nelsondist = nrow(ballot_notabs[ballot_notabs$isenatorial==1,])/nrow(ballot_notabs)
+#   deckarddist = nrow(ballot_notabs[ballot_notabs$isenatorial==2,])/nrow(ballot_notabs)
+# 
+#   effect = other*otherdist+nelson*nelsondist+deckard*deckarddist
+#   votes[b] = effect * nrow(ballot_notabs)
+# }
+```
+  
+
+# Conclusions
+
+  **(1)** Deciding to go with our linear model using log(Gore Votes) to predict the absDiffBuchananVotes, we have found through modeling and bootstrapping that Buchanan received an abnormally higher amount of votes in Palm Beach County on election day than he was expected to have. In particular, he should have received an estimated amount of 2430 less votes, the amount needed (537 votes) for Gore to have defeated Bush and won the election.
+
+  **(2)** This conclusions we have drawn and the modeling we have used are only valid given our assumptions about the data first-hand. To create our linear model, we assume that the data itself graphically follows a linear pattern already. More importantly, we expected the residuals/errors to be independent and normally distributed, with constant variance and no correlation. However, given what we know about the data and have seen in the residual plots, the errors seem to have a slightly fanning shape in all three model diagnostics. In reality, we also would not be surprised if the errors are correlated given a county is dependent on the affiliation of the party, and the affiliation of the party could also play a role in voting in-person or not. The limitations would be the assumptions of our model, which bootstrapping with cases does help by tackling these uncertainties within the errors. We also do not know if marginalizing on in-person voting was the sole condition that would confound the results of votes for Buchanan.
+  
+  **(3)** But, overall, given our models and bootstrapping amidst the uncertainties, we did find statistically significant results. Buchanan would have indeed received less votes from PBC on the day of election, specifically ~2430 less votes on average.**(4)** Some limitations of the individual ballot-level analysis include that this difference is affected only by the butterfly ballot's defect and no other confounding variables. Though, given how complex politics is, this is unlikely the case. 
